@@ -64,6 +64,54 @@ def load_cases() -> pd.DataFrame:
 st.title("EP Lab Procedural Efficiency")
 st.caption("Filter, analyse, and project schedule changes against 145 AFib ablation cases (Jan – Oct 2025).")
 
+with st.expander("How to use this app", expanded=False):
+    st.markdown("""
+**What this app does in plain English.**
+A hospital electrophysiology (EP) lab performs heart procedures called
+AFib ablations. Some take 17 minutes, others take 159. The schedulers
+need to know *why* — is it the physician, the patient, or just bad
+luck? This app analyses 145 real cases, breaks down which procedural
+phase causes the most variation, and lets you simulate scheduling
+changes to see how much overrun time the lab could save.
+
+**Quick start (60 seconds).**
+1. Use the **filters** in the sidebar (physician, date range, case
+   type) to narrow down which cases to analyse.
+2. Look at the **CV by phase** chart — taller bars = more variable
+   phase. The biggest bars are where the unpredictability lives.
+3. Switch to the **Drivers** tab — pick a feature like "ablation
+   sites" and see how it correlates with case time.
+4. Open the **Schedule what-if** tab and slide the warm-up allowance
+   to see how many fewer days would run over.
+
+**The filters.**
+- **Physician** — pick one or all three doctors.
+- **Date range** — restrict to a window of cases.
+- **Case mix** — All / Standard PVI / Extra targets. "Extra targets"
+  cases take longer and are usually what causes overruns.
+
+**The tabs.**
+- **CV by phase** — Coefficient of variation per procedure phase. CV
+  is variability normalized by the average — higher = the phase is
+  unpredictable. Pre-Map and TSP top this chart because they depend
+  heavily on patient anatomy.
+- **Physician comparison** — boxplots and an ANOVA test across the
+  three doctors. The ANOVA p-value tells you whether the differences
+  are real or random.
+- **Drivers** — Pearson correlation between each driver (ablation
+  count, TSP duration, etc.) and total case time. Higher correlation
+  = more predictive.
+- **Schedule what-if** — the punchline. Move the warm-up allowance
+  slider and the case-ordering toggle to simulate a complexity-aware
+  schedule. The number at the top tells you what % of overrun days
+  you'd save.
+
+**Try this.** Filter to "Extra targets" only and look at how much
+worse case time gets vs Standard PVI. Then in the what-if tab, turn
+on complexity-based ordering and watch the projected daily overruns
+drop ~15 %.
+""")
+
 if not DATA.exists():
     st.error(f"`{DATA}` not found. Make sure you're running from the project folder.")
     st.stop()
