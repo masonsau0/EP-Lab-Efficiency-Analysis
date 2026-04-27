@@ -105,6 +105,11 @@ changes to see how much overrun time the lab could save.
   slider and the case-ordering toggle to simulate a complexity-aware
   schedule. The number at the top tells you what % of overrun days
   you'd save.
+- **PCS calculator** — Patient Complexity Score. Pick six pre-op
+  factors (BMI, cardiac history, septal anatomy, ablation scope, ASA
+  score, anticoagulation) for a hypothetical patient and the app
+  returns a 0–100 complexity score plus the recommended slot in the
+  day's schedule.
 
 **Try this.** Filter to "Extra targets" only and look at how much
 worse case time gets vs Standard PVI. Then in the what-if tab, turn
@@ -155,8 +160,8 @@ m4.metric("Range", f"{int(filt['Case_Time'].min())} – {int(filt['Case_Time'].m
 
 st.divider()
 
-tab_cv, tab_phys, tab_drivers, tab_seq, tab_whatif = st.tabs(
-    ["CV by phase", "Physician comparison", "Drivers", "Daily sequence", "Schedule what-if"]
+tab_cv, tab_phys, tab_drivers, tab_seq, tab_whatif, tab_pcs = st.tabs(
+    ["CV by phase", "Physician comparison", "Drivers", "Daily sequence", "Schedule what-if", "PCS calculator"]
 )
 
 
@@ -311,3 +316,206 @@ with tab_whatif:
     ax.legend(); ax.grid(alpha=0.3)
     plt.tight_layout(); st.pyplot(fig)
     st.caption("Points below the parity line = days that would have finished earlier under the new schedule.")
+
+
+# ---- PCS calculator ------------------------------------------------------
+
+PCS_FACTORS = [
+    {
+        "id": "bmi",
+        "name": "BMI Category",
+        "weight": 15,
+        "levels": [
+            ("Normal (18.5–25)", "Baseline vascular access difficulty and standard anesthesia profile."),
+            ("Overweight (25–30)", "+1 to 2 min access due to deeper vein and slightly longer intubation."),
+            ("Obese (30–40)", "+3 to 5 min access, ultrasound guidance more likely, harder intubation."),
+            ("Morbidly Obese (>40)", "+5 to 10 min total, possible table constraints, harder hemostasis."),
+        ],
+        "affects": ["Pt Prep/Intubation", "Vascular Access", "Post-Care"],
+    },
+    {
+        "id": "cardiac",
+        "name": "Cardiac History",
+        "weight": 20,
+        "levels": [
+            ("First-time AFib ablation", "Standard anatomy with no prior scar-related complexity."),
+            ("Prior cardiac catheterization", "May have scar tissue at access site or known vascular variation."),
+            ("Prior ablation (redo)", "+10 to 20 min. Scar tissue complicates mapping and TSP."),
+            ("Prior cardiac surgery", "Altered anatomy may make TSP and mapping significantly harder."),
+        ],
+        "affects": ["TSP", "Pre-Map", "Ablation"],
+    },
+    {
+        "id": "anatomy",
+        "name": "Septal Anatomy (from pre-op imaging)",
+        "weight": 25,
+        "levels": [
+            ("Normal / thin septum", "TSP expected in roughly 2 to 5 min."),
+            ("Thickened septum", "TSP may take 5 to 10 min and require added care."),
+            ("Lipomatous / aneurysmal septum", "TSP may take 10 to 20 min and require specialized technique."),
+            ("Prior septal closure / PFO device", "TSP may exceed 20 min or require an alternative approach."),
+        ],
+        "affects": ["TSP"],
+    },
+    {
+        "id": "ablation_scope",
+        "name": "Planned Ablation Scope",
+        "weight": 25,
+        "levels": [
+            ("Standard PVI only (4 veins)", "Around 17 to 20 ablation sites and about 25 min duration."),
+            ("PVI + 1 extra target", "Roughly 22 to 25 sites and about 35 min duration."),
+            ("PVI + BOX or PST BOX", "About 25 to 28 sites and near 45 min duration."),
+            ("PVI + multiple extras", "28 to 30+ sites and 60+ min ablation duration."),
+        ],
+        "affects": ["Ablation", "Verification"],
+    },
+    {
+        "id": "comorbidity",
+        "name": "Comorbidity / ASA Score",
+        "weight": 10,
+        "levels": [
+            ("ASA I–II", "Standard anesthesia and faster recovery expected."),
+            ("ASA III", "+2 to 3 min prep and longer post-care monitoring."),
+            ("ASA IV", "+5+ min prep, slower extubation, extended monitoring."),
+        ],
+        "affects": ["Pt Prep/Intubation", "Post-Care"],
+    },
+    {
+        "id": "anticoag",
+        "name": "Anticoagulation Status",
+        "weight": 5,
+        "levels": [
+            ("Standard protocol", "Normal hemostasis expected."),
+            ("Therapeutic anticoagulation", "+3 to 5 min post-care for hemostasis."),
+            ("Dual antiplatelet / complex regimen", "+5 to 10 min post-care and possible closure device."),
+        ],
+        "affects": ["Catheter Removal", "Post-Care"],
+    },
+]
+
+
+with tab_pcs:
+    st.markdown(
+        "Estimate procedural complexity from six pre-operative factors that "
+        "are usually hidden from raw timing data. Pick the patient profile "
+        "below — the score and recommended schedule slot update instantly."
+    )
+
+    selections: dict[str, int] = {}
+    cols = st.columns(2)
+    for i, factor in enumerate(PCS_FACTORS):
+        with cols[i % 2]:
+            with st.container(border=True):
+                st.markdown(f"**{factor['name']}**  &nbsp; *({factor['weight']}% weight)*")
+                st.caption(f"Affects: {', '.join(factor['affects'])}")
+                labels = [lvl[0] for lvl in factor["levels"]]
+                idx = st.radio(
+                    factor["name"],
+                    options=list(range(len(labels))),
+                    format_func=lambda i, labels=labels: labels[i],
+                    key=f"pcs_{factor['id']}",
+                    label_visibility="collapsed",
+                )
+                selections[factor["id"]] = idx
+                st.caption(f"_Selected effect:_ {factor['levels'][idx][1]}")
+
+    score = 0.0
+    breakdown_rows = []
+    for factor in PCS_FACTORS:
+        max_level = len(factor["levels"]) - 1
+        sel = selections[factor["id"]]
+        contribution = (sel / max_level) * factor["weight"]
+        score += contribution
+        breakdown_rows.append({
+            "Factor": factor["name"].split("(")[0].strip(),
+            "Selected": factor["levels"][sel][0].split("(")[0].strip(),
+            "Score / Max": f"{sel}/{max_level}",
+            "Weight": f"{factor['weight']}%",
+            "Contribution": round(contribution, 1),
+        })
+    score = round(score)
+
+    if score > 60:
+        category, slot, color = "High", "2nd case of the day", "#f87171"
+        rationale = (
+            "This case likely needs the strongest decision quality and the most "
+            "focused attention. The second case is the best fit because the team "
+            "is already warmed up, but fatigue is still limited."
+        )
+    elif score > 30:
+        category, slot, color = "Medium", "1st or 3rd case", "#facc15"
+        rationale = (
+            "A medium-complexity case fits best in the first or third slot. These "
+            "positions balance warm-up effects with still-solid cognitive capacity."
+        )
+    else:
+        category, slot, color = "Low", "4th case of the day", "#22c55e"
+        rationale = (
+            "This case is routine enough to tolerate later-day fatigue better. "
+            "Placing it last helps preserve the strongest slots for harder cases."
+        )
+
+    affected_steps: list[str] = []
+    for factor in PCS_FACTORS:
+        if selections[factor["id"]] > 0:
+            for step in factor["affects"]:
+                if step not in affected_steps:
+                    affected_steps.append(step)
+
+    st.divider()
+    res_left, res_right = st.columns([1, 1])
+    with res_left:
+        st.markdown(
+            f"<div style='font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:1.6px;'>Patient Complexity Score</div>"
+            f"<div style='font-size:58px;font-weight:800;font-family:monospace;line-height:1;color:{color};'>{score}<span style='font-size:22px;color:#94a3b8;'> /100</span></div>",
+            unsafe_allow_html=True,
+        )
+        st.progress(min(score, 100) / 100)
+    with res_right:
+        st.markdown(
+            f"<div style='font-size:24px;font-weight:800;color:{color};text-align:right;'>{category} Complexity</div>"
+            f"<div style='font-size:14px;color:#94a3b8;text-align:right;margin-top:8px;'>Recommended scheduling slot: <strong style='color:{color};'>{slot}</strong></div>",
+            unsafe_allow_html=True,
+        )
+
+    with st.container(border=True):
+        st.markdown("**Scheduling rationale**")
+        st.markdown(rationale)
+        if affected_steps:
+            st.caption("Procedure steps affected: " + " · ".join(affected_steps))
+
+    with st.expander("Show score breakdown & formula"):
+        st.markdown("**Formula:** PCS = Σ (selected level / max level) × factor weight")
+        st.dataframe(pd.DataFrame(breakdown_rows), hide_index=True, use_container_width=True)
+        st.markdown(f"**Total PCS:** {score} / 100")
+        st.caption(
+            "Septal anatomy and ablation scope are weighted highest because they "
+            "are the strongest drivers of intra-procedural difficulty. Cardiac "
+            "history follows closely because redo or surgically altered cases can "
+            "meaningfully increase mapping and access complexity. BMI, ASA score, "
+            "and anticoagulation matter too, but they affect more secondary "
+            "timing burdens rather than the main bottleneck steps."
+        )
+
+    with st.expander("Suggested daily pattern: Medium → High → Medium → Low"):
+        slot_data = [
+            ("Case 1", "Medium", "~8:00 AM", "Warm-up case to settle the team into flow."),
+            ("Case 2", "High", "~10:00 AM", "Best slot for peak cognition after warm-up."),
+            ("Case 3", "Medium", "~12:00 PM", "Still strong attention with decent buffer."),
+            ("Case 4", "Low", "~2:30 PM", "Routine case that is more fatigue resilient."),
+        ]
+        slot_cols = st.columns(4)
+        for (slot_name, slot_cat, slot_time, slot_reason), col in zip(slot_data, slot_cols):
+            active = slot_cat == category
+            slot_color = {"High": "#f87171", "Medium": "#facc15", "Low": "#22c55e"}[slot_cat]
+            with col:
+                st.markdown(
+                    f"<div style='border-top:3px solid {slot_color};padding:12px;border-radius:8px;background:rgba(255,255,255,{0.06 if active else 0.02});opacity:{1 if active else 0.55};'>"
+                    f"<div style='font-weight:800;font-size:12px;'>{slot_name}</div>"
+                    f"<div style='font-weight:800;font-size:12px;color:{slot_color};margin:6px 0 4px;'>{slot_cat}</div>"
+                    f"<div style='font-size:11px;color:#94a3b8;'>{slot_time}</div>"
+                    f"<div style='font-size:11px;color:#94a3b8;margin-top:6px;'>{slot_reason}</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+        st.caption("This layout is meant to help explain where a patient best fits in the daily sequence, not to replace clinical judgment.")
