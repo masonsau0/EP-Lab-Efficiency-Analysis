@@ -1,6 +1,6 @@
 # EP Lab Procedural Efficiency Analysis
 
-**[Live demo](https://ep-lab-efficiency-analysis.streamlit.app)** — runs in your browser, no install required.
+**[Live demo](https://mason-ep-lab-efficiency-analysis.streamlit.app/)** — runs in your browser, no install required.
 
 Statistical analysis of **atrial fibrillation (AFib) ablation** procedure data
 — **145 cases across 3 physicians, Jan – Oct 2025** — identifying bottlenecks
